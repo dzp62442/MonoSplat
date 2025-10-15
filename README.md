@@ -11,7 +11,7 @@ git clone https://github.com/CUHK-AIM-Group/MonoSplat.git
 cd MonoSplat
 conda create -n monosplat python=3.10
 conda activate monosplat
-pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118
+pip install numpy==1.26.3 torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118
 pip install -r requirements.txt
 ```
 
@@ -41,9 +41,10 @@ To render novel views and compute evaluation metrics from a pretrained model,
 python -m src.main +experiment=re10k \
     mode=test \
     dataset/view_sampler=evaluation \
-    checkpointing.load=/path/to/checkpoint \
-    dataset.view_sampler.index_path=assets/evaluation_index_re10k_nctx10.json \
+    checkpointing.load=checkpoints/epoch_63-step_300000.ckpt \
+    dataset.view_sampler.index_path=assets/evaluation_index_re10k_nctx2.json \
     test.compute_scores=true \
+    test.save_image=false \
     wandb.mode=disabled
 ```
 
