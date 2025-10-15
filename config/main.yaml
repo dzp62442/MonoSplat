@@ -6,8 +6,8 @@ defaults:
   - loss: [mse]
 
 wandb:
-  project: anysplat
-  entity: vvvsice
+  project: monosplat
+  entity: dzp62442-DROPS
   name: placeholder
   mode: online
   id: null
