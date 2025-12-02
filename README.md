@@ -1,3 +1,15 @@
+在 OmniScene 数据集上与 SVF-GS 进行对比
+
+### 训练
+
+TODO
+
+### 测试
+
+TODO
+
+---
+
 <p align="center">
   <h1 align="center">MonoSplat: Generalizable 3D Gaussian Splatting from Monocular Depth Foundation Models</h1>
 
