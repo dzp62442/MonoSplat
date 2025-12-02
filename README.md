@@ -1,12 +1,31 @@
 在 OmniScene 数据集上与 SVF-GS 进行对比
 
 ### 训练
-
-TODO
+```bash
+python -m src.main +experiment=omniscene_112x200 \
+mode=train \
+output_dir=checkpoints/omniscene-112x200 \
+```
 
 ### 测试
+```bash
+python -m src.main +experiment=omniscene_224x400 \
+mode=test \
+checkpointing.load=/path/to/checkpoint \
+test.compute_scores=true \
+wandb.mode=disabled
+```
 
-TODO
+### 可视化控制
+- 保存输出与视频：
+```bash
+test.save_image=true \
+test.save_video=true \
+test.save_video_omniscene=true
+```
+- 保存 GT/深度或高斯点云可视化时，可继续叠加 `test.save_gt_image=true`、`test.save_depth=true`、`test.save_gaussian=true` 等开关。
+
+> 数据放置于 `datasets/omniscene/interp_12Hz_trainval`，更多细节见 `docs/OmniScene数据集实验文档.md`。
 
 ---
 

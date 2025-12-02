@@ -56,6 +56,7 @@ class TestCfg:
     save_image: bool
     save_video: bool
     eval_time_skip_steps: int
+    save_video_omniscene: bool
 
 
 @dataclass
@@ -63,6 +64,9 @@ class TrainCfg:
     depth_mode: DepthRenderingMode | None
     extended_visualization: bool
     print_log_every_n_steps: int
+    use_dynamic_mask: bool
+    l1_loss: bool
+    train_ignore_large_loss: float
 
 
 @runtime_checkable
@@ -138,6 +142,15 @@ class ModelWrapper(LightningModule):
             depth_mode=self.train_cfg.depth_mode,
         )
         target_gt = batch["target"]["image"]
+        valid_depth_mask = None
+        if (
+            self.train_cfg.use_dynamic_mask
+            and "masks" in batch["target"]
+        ):
+            masks = batch["target"]["masks"]
+            if masks is not None:
+                valid_depth_mask = masks.unsqueeze(2).expand_as(target_gt)
+                valid_depth_mask = ~valid_depth_mask
 
         # Compute metrics.
         psnr_probabilistic = compute_psnr(
@@ -149,7 +162,26 @@ class ModelWrapper(LightningModule):
         # Compute and log loss.
         total_loss = 0
         for loss_fn in self.losses:
-            loss = loss_fn.forward(output, batch, gaussians, self.global_step)
+            if loss_fn.name == "mse":
+                loss = loss_fn.forward(
+                    output,
+                    batch,
+                    gaussians,
+                    self.global_step,
+                    l1_loss=self.train_cfg.l1_loss,
+                    clamp_large_error=self.train_cfg.train_ignore_large_loss,
+                    valid_depth_mask=valid_depth_mask,
+                )
+            elif loss_fn.name == "lpips":
+                loss = loss_fn.forward(
+                    output,
+                    batch,
+                    gaussians,
+                    self.global_step,
+                    valid_depth_mask=valid_depth_mask,
+                )
+            else:
+                loss = loss_fn.forward(output, batch, gaussians, self.global_step)
             self.log(f"loss/{loss_fn.name}", loss)
             total_loss = total_loss + loss
         self.log("loss/total", total_loss)
@@ -216,6 +248,86 @@ class ModelWrapper(LightningModule):
             save_video(
                 [a for a in images_prob],
                 path / "video" / f"{scene}_frame_{frame_str}.mp4",
+            )
+        if (
+            self.test_cfg.save_video_omniscene
+            and batch["target"]["extrinsics"].shape[1] >= 6
+        ):
+            target_extrinsics = batch["target"]["extrinsics"]
+            c2w_cf = target_extrinsics[:, -6]
+            c2w_cf_forward = c2w_cf.clone()
+            c2w_cf_forward[..., 1, 3] = c2w_cf_forward[..., 1, 3] + 3
+            c2w_cfr = target_extrinsics[:, -5]
+            c2w_cfl = target_extrinsics[:, -4]
+            c2w_cb = target_extrinsics[:, -3]
+            c2w_cb[..., 1, 3] = c2w_cb[..., 1, 3] + 1.5
+            c2w_cb_backward = c2w_cb.clone()
+            c2w_cb_backward[..., 1, 3] = c2w_cb_backward[..., 1, 3] - 3
+            c2w_cbl = target_extrinsics[:, -2]
+            c2w_cbr = target_extrinsics[:, -1]
+
+            num_frames_short = 60
+            num_frames_long = 120
+            num_frames_all = 60 * 4 + 120 * 6
+            t_short = torch.linspace(
+                0,
+                1,
+                num_frames_short,
+                dtype=torch.float32,
+                device=self.device,
+            )
+            t_long = torch.linspace(
+                0,
+                1 - 1 / (num_frames_long + 1),
+                num_frames_long,
+                dtype=torch.float32,
+                device=self.device,
+            )
+
+            c2w_interp_forward0 = interpolate_extrinsics(c2w_cf, c2w_cf_forward, t_short)
+            c2w_interp_forward1 = interpolate_extrinsics(c2w_cf_forward, c2w_cf, t_short)
+            c2w_interp_0 = interpolate_extrinsics(c2w_cf, c2w_cfr, t_long)
+            c2w_interp_1 = interpolate_extrinsics(c2w_cfr, c2w_cbr, t_long)
+            c2w_interp_2 = interpolate_extrinsics(c2w_cbr, c2w_cb, t_long)
+            c2w_interp_backward0 = interpolate_extrinsics(c2w_cb, c2w_cb_backward, t_short)
+            c2w_interp_backward1 = interpolate_extrinsics(c2w_cb_backward, c2w_cb, t_short)
+            c2w_interp_3 = interpolate_extrinsics(c2w_cb, c2w_cbl, t_long)
+            c2w_interp_4 = interpolate_extrinsics(c2w_cbl, c2w_cfl, t_long)
+            c2w_interp_5 = interpolate_extrinsics(c2w_cfl, c2w_cf, t_long)
+
+            c2w_interp = torch.cat(
+                [
+                    c2w_interp_forward0,
+                    c2w_interp_forward1,
+                    c2w_interp_0,
+                    c2w_interp_1,
+                    c2w_interp_2,
+                    c2w_interp_backward0,
+                    c2w_interp_backward1,
+                    c2w_interp_3,
+                    c2w_interp_4,
+                    c2w_interp_5,
+                ],
+                dim=1,
+            )
+            intrinsics_interp = batch["target"]["intrinsics"][:, -6:-5].repeat(
+                1, num_frames_all, 1, 1
+            )
+            nears_interp = batch["target"]["near"][:, -6:-5].repeat(1, num_frames_all)
+            fars_interp = batch["target"]["far"][:, -6:-5].repeat(1, num_frames_all)
+
+            output_omniscene = self.decoder.forward(
+                gaussians,
+                c2w_interp,
+                intrinsics_interp,
+                nears_interp,
+                fars_interp,
+                (h, w),
+                depth_mode=None,
+            )
+            save_video(
+                [frame for frame in output_omniscene.color[0]],
+                path / "videos_omniscene" / f"{scene}.mp4",
             )
 
         # compute scores

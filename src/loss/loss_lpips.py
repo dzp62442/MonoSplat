@@ -39,6 +39,7 @@ class LossLpips(Loss[LossLpipsCfg, LossLpipsCfgWrapper]):
         batch: BatchedExample,
         gaussians: Gaussians,
         global_step: int,
+        valid_depth_mask: Tensor | None = None,
     ) -> Float[Tensor, ""]:
         image = batch["target"]["image"]
 
@@ -46,8 +47,19 @@ class LossLpips(Loss[LossLpipsCfg, LossLpipsCfgWrapper]):
         if global_step < self.cfg.apply_after_step:
             return torch.tensor(0, dtype=torch.float32, device=image.device)
 
+        pred = prediction.color
+        if (
+            valid_depth_mask is not None
+            and valid_depth_mask.max() > 0.5
+            and valid_depth_mask.min() < 0.5
+        ):
+            pred = pred.clone()
+            image = image.clone()
+            pred[valid_depth_mask] = 0
+            image[valid_depth_mask] = 0
+
         loss = self.lpips.forward(
-            rearrange(prediction.color, "b v c h w -> (b v) c h w"),
+            rearrange(pred, "b v c h w -> (b v) c h w"),
             rearrange(image, "b v c h w -> (b v) c h w"),
             normalize=True,
         )

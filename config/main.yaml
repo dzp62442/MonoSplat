@@ -52,6 +52,9 @@ train:
   depth_mode: null
   extended_visualization: false
   print_log_every_n_steps: 1
+  use_dynamic_mask: false
+  l1_loss: false
+  train_ignore_large_loss: 0.0
 
 test:
   output_path: outputs/test
@@ -59,6 +62,7 @@ test:
   eval_time_skip_steps: 0
   save_image: true
   save_video: false
+  save_video_omniscene: false
 
 seed: 111123
 
