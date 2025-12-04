@@ -5,6 +5,7 @@
 python -m src.main +experiment=omniscene_112x200 \
 mode=train \
 output_dir=checkpoints/omniscene-112x200 \
+checkpointing.pretrained_monodepth=pretrained/depth_anything_v2_vits.pth
 ```
 
 ### 测试

@@ -178,3 +178,4 @@ table.tex
 point_clouds*
 assets/*_3views.json
 latest-run
+pretrained/
