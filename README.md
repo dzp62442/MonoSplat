@@ -9,24 +9,25 @@ checkpointing.pretrained_monodepth=pretrained/depth_anything_v2_vits.pth
 ```
 
 ### 测试
+
+> 默认使用 mini-test 模式，如需完整测试，请手动注释 `dataset_omniscene.py` 中的抽样语句。
+
 ```bash
-python -m src.main +experiment=omniscene_224x400 \
+python -m src.main +experiment=omniscene_112x200 \
 mode=test \
-checkpointing.load=/path/to/checkpoint \
-test.compute_scores=true \
-wandb.mode=disabled
+checkpointing.load=checkpoints/omniscene-112x200/checkpoints/epoch_0-step_100000.ckpt \
+test.output_path=outputs/omniscene-112x200 \
+wandb.mode=disabled \
+test.compute_scores=true
 ```
 
-### 可视化控制
-- 保存输出与视频：
+- 保存可视化结果
 ```bash
 test.save_image=true \
 test.save_video=true \
 test.save_video_omniscene=true
 ```
-- 保存 GT/深度或高斯点云可视化时，可继续叠加 `test.save_gt_image=true`、`test.save_depth=true`、`test.save_gaussian=true` 等开关。
-
-> 数据放置于 `datasets/omniscene/interp_12Hz_trainval`，更多细节见 `docs/OmniScene数据集实验文档.md`。
+- 未实现的可视化：`save_gt_image`、`save_depth`、`save_gaussian` 等。
 
 ---
 
