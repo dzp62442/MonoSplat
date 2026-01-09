@@ -40,12 +40,15 @@ def load_conditions(
     resolution: Sequence[int],
     *,
     is_input: bool,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Load RGB images, masks, and normalized intrinsics."""
+    load_rel_depth: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    """Load RGB images, masks, normalized intrinsics, and optional relative depth."""
 
-    def maybe_resize(image: Image.Image, ck: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def maybe_resize(
+        image: Image.Image, ck: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, bool]:
         if image.height == resolution[0] and image.width == resolution[1]:
-            return np.array(image), ck
+            return np.array(image), ck, False
         fx, fy, cx, cy = ck[0, 0], ck[1, 1], ck[0, 2], ck[1, 2]
         scale_h = resolution[0] / image.height
         scale_w = resolution[1] / image.width
@@ -58,9 +61,10 @@ def load_conditions(
             dtype=np.float32,
         )
         resized = image.resize((resolution[1], resolution[0]))
-        return np.array(resized), ck
+        return np.array(resized), ck, True
 
     imgs, masks, intrinsics = [], [], []
+    rel_depths = [] if load_rel_depth else None
     for img_path in img_paths:
         param_path = (
             img_path.replace("samples", "samples_param_small")
@@ -76,12 +80,32 @@ def load_conditions(
             .replace("sweeps", "sweeps_small")
         )
         image = Image.open(image_path)
-        image_np, ck = maybe_resize(image, ck)
+        image_np, ck, resized = maybe_resize(image, ck)
         ck[0, :] = ck[0, :] / resolution[1]
         ck[1, :] = ck[1, :] / resolution[0]
 
         imgs.append(_ensure_hwc3(image_np))
         intrinsics.append(ck)
+
+        if load_rel_depth:
+            depth_path = (
+                image_path.replace("sweeps_small", "sweeps_dpt_small")
+                .replace("samples_small", "samples_dpt_small")
+                .replace(".jpg", ".npy")
+            )
+            disp = np.load(depth_path).astype(np.float32)
+            if resized:
+                disp_image = Image.fromarray(disp)
+                disp_image = disp_image.resize(
+                    (resolution[1], resolution[0]), Image.BILINEAR
+                )
+                disp = np.array(disp_image, dtype=np.float32)
+            ratio = min(disp.max() / (disp.min() + 0.001), 50.0)
+            max_val = disp.max()
+            min_val = max_val / ratio
+            depth = 1.0 / np.maximum(disp, min_val)
+            depth = (depth - depth.min()) / (depth.max() - depth.min())
+            rel_depths.append(depth.astype(np.float32))
 
         if is_input:
             masks.append(np.ones(resolution, dtype=bool))
@@ -105,5 +129,10 @@ def load_conditions(
     )
     masks_tensor = torch.from_numpy(np.stack(masks, axis=0)).bool()
     intrinsics_tensor = torch.as_tensor(np.stack(intrinsics, axis=0), dtype=torch.float32)
+    rel_depths_tensor = (
+        None
+        if rel_depths is None
+        else torch.from_numpy(np.stack(rel_depths, axis=0)).float()
+    )
 
-    return imgs_tensor, masks_tensor, intrinsics_tensor
+    return imgs_tensor, masks_tensor, intrinsics_tensor, rel_depths_tensor

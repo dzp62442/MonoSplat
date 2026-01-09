@@ -20,6 +20,19 @@
 - **测试视频**：若 `test.save_video_omniscene=true`，在 `ModelWrapper.test_step` 末尾参考 depthsplat 的实现，读取 batch 中最后 6 个姿态，生成自定义轨迹、调用 decoder 渲染，并将 mp4 保存到 `outputs/test/<run>/videos_omniscene/scene.mp4`。该功能只在 OmniScene 任务启用，其他数据集默认保持当前逻辑。
 - **评估节奏**：MonoSplat 不会自动插入额外的 evaluation dataloader，因此如需训练过程中执行 mini-test，可通过 `trainer.val_check_interval` 调整验证频率，或在 README / 脚本中提供“训练完再跑一次 `mode=test`”的命令。
 
+## PCC 指标补充方案
+1. **相对深度加载（仅 test）**：
+   - 在 `src/dataset/utils_omniscene.py::load_conditions` 增加 `load_rel_depth` 开关；为 `True` 时读取 DepthAnything-v2 的 disparity（`samples_dpt_small`/`sweeps_dpt_small` 下 `.npy`），如遇 resize 同步做双线性缩放；随后按 depthsplat 的做法将 disparity 转为相对深度（限制最远/最近比例为 50，再做 min-max 归一化到 `[0, 1]`），返回 `rel_depth` 张量。
+   - `DatasetOmniScene` 在 `__init__` 中维护 `self.load_rel_depth`，默认 `stage == "test"` 时启用；其它阶段强制关闭以降低 IO。`__getitem__` 在 `target` 中追加 `rel_depth`（输入/输出拼接后对齐），未启用时显式为 `None`。
+   - 若启用了 patch shim（`src/dataset/shims/patch_shim.py`），需像 `masks` 一样对 `rel_depth` 做中心裁剪，保证与图像/内参对齐。
+2. **渲染深度结果**：
+   - 本项目的解码器支持深度渲染：`Decoder.forward` 在 `depth_mode` 非空时返回 `DecoderOutput.depth`（形状 `[b, v, h, w]`），当前 `ModelWrapper.test_step` 传入 `depth_mode=None`，因此默认没有深度输出。
+   - 计算 PCC 时需在 test 阶段为 `decoder.forward` 指定 `depth_mode="depth"`（或与相对深度一致的模式），确保 `output.depth` 可用；建议仅在 `test.compute_scores=true` 且 `target["rel_depth"]` 存在时开启，以减少额外渲染开销。
+3. **PCC 指标计算位置**：
+   - 参照 depthsplat，将 `compute_pcc` 与 `compute_psnr/compute_ssim/compute_lpips` 放在同一文件 `src/evaluation/metrics.py`，使用 `torchmetrics.PearsonCorrCoef`，输入为 `(rel_depth, pred_depth)` 的 `[b, h, w]` 张量并在像素维度上计算相关系数。
+4. **PCC 统计与汇总**：
+   - 复用 `ModelWrapper.test_step` 中的 `test_step_outputs` 聚合逻辑：当 `output.depth` 与 `target["rel_depth"]` 均存在时追加 `pcc`；`on_test_end` 与 PSNR/SSIM/LPIPS 共用汇总/落盘流程（写入 `scores_pcc_all.json`，并在 `scores_all_avg.json` 中加入 `pcc` 均值）。
+
 ## 与 depthsplat 的差异与复用策略
 1. **可直接迁移的部分**：`config/dataset/omniscene.yaml`、`config/experiment/omniscene_*.yaml`、`src/dataset/dataset_omniscene.py`、`src/dataset/utils_omniscene.py` 的主体逻辑都可直接复用，只需要把少量依赖（如 `train_times_per_scene`）封装到新 cfg 中。
 2. **需要适配的部分**：MonoSplat 的损失定义、`TrainCfg/TestCfg` 以及 `ModelWrapper` 缺少 depthsplat 的掩码/可视化字段，必须添加新参数后再在 `training_step/test_step` 中显式处理；另外 Stage 仅有 train/val/test，因此 demo 模式等附加分支要通过配置开关模拟。

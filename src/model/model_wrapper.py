@@ -17,7 +17,7 @@ import json
 from ..dataset.data_module import get_data_shim
 from ..dataset.types import BatchedExample
 from ..dataset import DatasetCfg
-from ..evaluation.metrics import compute_lpips, compute_psnr, compute_ssim
+from ..evaluation.metrics import compute_lpips, compute_pcc, compute_psnr, compute_ssim
 from ..global_cfg import get_cfg
 from ..loss import Loss
 from ..misc.benchmarker import Benchmarker
@@ -214,6 +214,11 @@ class ModelWrapper(LightningModule):
         assert b == 1
 
         # Render Gaussians.
+        need_depth = (
+            self.test_cfg.compute_scores
+            and "rel_depth" in batch["target"]
+            and batch["target"]["rel_depth"] is not None
+        )
         with self.benchmarker.time("encoder"):
             gaussians = self.encoder(
                 batch["context"],
@@ -228,7 +233,7 @@ class ModelWrapper(LightningModule):
                 batch["target"]["near"],
                 batch["target"]["far"],
                 (h, w),
-                depth_mode=None,
+                depth_mode="depth" if need_depth else None,
             )
 
         (scene,) = batch["scene"]
@@ -353,6 +358,16 @@ class ModelWrapper(LightningModule):
             self.test_step_outputs[f"lpips"].append(
                 compute_lpips(rgb_gt, rgb).mean().item()
             )
+            if output.depth is not None and "rel_depth" in batch["target"]:
+                if f"pcc" not in self.test_step_outputs:
+                    self.test_step_outputs[f"pcc"] = []
+                rel_depth = batch["target"]["rel_depth"]
+                if rel_depth is not None:
+                    pcc = compute_pcc(
+                        rearrange(rel_depth, "b v h w -> (b v) h w"),
+                        rearrange(output.depth, "b v h w -> (b v) h w"),
+                    )
+                    self.test_step_outputs[f"pcc"].append(pcc.item())
 
     def on_test_end(self) -> None:
         name = get_cfg()["wandb"]["name"]
